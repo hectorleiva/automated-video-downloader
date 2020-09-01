@@ -133,3 +133,5 @@ dmypy.json
 downloaded-videos/*
 !downloaded-videos/.gitkeep
 vendored/*
+bin/*
+pyvenv.cfg
