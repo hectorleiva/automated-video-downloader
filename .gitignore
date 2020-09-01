@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Custom to project
+*.swp
+downloaded-videos/*
+!downloaded-videos/.gitkeep
+vendored/*
