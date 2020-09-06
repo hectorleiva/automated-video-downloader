@@ -1,48 +1,82 @@
 ---
-# name: Docker Build/Publish arm v7 Image to Dockerhub
-#
-# on:
-#   push:
-#     branches: [master]
-# 
-# jobs:
-#   build:
-#     runs-on: ubuntu-18.04
-#     env:
-#       DOCKER_REGISTRY: hub.docker.com
-#       DOCKER_IMAGE: hectorleiva/automated-video-downloader
-#       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-#       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-#       DOCKER_TARGET_PLATFORM: linux/arm/v7
-# 
-#     steps:
-#       - name: Checkout the code
-#         uses: actions/checkout@v1
-# 
-#       - name: Set up Docker Buildx
-#         uses: crazy-max/ghaction-docker-buildx@v1
-#         with:
-#           version: latest
-# 
-#       - name: Prepare
-#         if: success()
-#         id: prepare
-#         run: |
-#           echo ::set-output name=docker_platform::${DOCKER_TARGET_PLATFORM}
-#           echo ::set-output name=docker_image::${DOCKER_REGISTRY}/${DOCKER_IMAGE}
-#           echo ::set-output name=version::${GITHUB_RUN_NUMBER}
-# 
-#       - name: Docker Login
-#         if: success()
-#         run: |
-#           echo "${DOCKER_PASSWORD}" | docker login ${DOCKER_REGISTRY} --username "${DOCKER_USERNAME}" --passwor
-# d-stdin
-# 
-#       - name: Run Buildx (push image)
-#         if: success()
-#         run: |
-#           docker buildx build \
-#           --platform ${{ steps.prepare.outputs.docker_platform }} \
-#           --tag ${{ steps.prepare.outputs.docker_image }}:${{ steps.prepare.outputs.version }} \
-#           --file ./Dockerfile \
-#           --output type=image,push=true .
+name: Docker Build/Publish Images to Dockerhub
+
+on:
+  push:
+    branches: [master]
+    tags:   # on git push tags event
+      - v*  #   and if the tags contain "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v2
+
+      - name: Prepare
+        id: prepare
+        run: |
+          DOCKER_IMAGE=hectorleiva/automated-video-downloader
+          DOCKER_PLATFORMS=linux/amd64,linux/arm/v6,linux/arm/v7
+          VERSION=edge
+
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            VERSION=nightly
+          fi
+
+          TAGS="--tag ${DOCKER_IMAGE}:${VERSION}"
+          if [[ $VERSION =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            TAGS="$TAGS --tag ${DOCKER_IMAGE}:latest"
+          fi
+
+          echo ::set-output name=docker_image::${DOCKER_IMAGE}
+          echo ::set-output name=version::${VERSION}
+          echo ::set-output name=buildx_args::--platform ${DOCKER_PLATFORMS} \
+            --build-arg VERSION=${VERSION} \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            --build-arg VCS_REF=${GITHUB_SHA::8} \
+            ${TAGS} --file ./Dockerfile ./
+
+      - name: Set up Docker Buildx
+        uses: crazy-max/ghaction-docker-buildx@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        id: cache
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Docker Buildx (build)
+        run: |
+          docker buildx build \
+            --cache-from "type=local,src=/tmp/.buildx-cache" \
+            --cache-to "type=local,dest=/tmp/.buildx-cache" \
+            --output "type=image,push=false" ${{ steps.prepare.outputs.buildx_args }}
+
+      - name: Docker Login
+        if: success() && github.event_name != 'pull_request'
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Docker Buildx (push)
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          docker buildx build \
+            --cache-from "type=local,src=/tmp/.buildx-cache" \
+            --output "type=image,push=true" ${{ steps.prepare.outputs.buildx_args }}
+
+      - name: Inspect image
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          docker buildx imagetools inspect ${{ steps.prepare.outputs.docker_image }}:${{ steps.prepare.outputs.version }}
+
