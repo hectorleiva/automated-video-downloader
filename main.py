@@ -11,7 +11,7 @@ if not PLAYLIST_URL:
     print('Unable to continue, no PLAYLIST_URL environment variable was set')
     sys.exit(1)
 
-DOWNLOAD_DIR = 'download-videos'
+DOWNLOAD_DIR = 'downloaded-videos'
 
 youtube_downloader(
     [PLAYLIST_URL
